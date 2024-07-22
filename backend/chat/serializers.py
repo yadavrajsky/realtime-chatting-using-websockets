@@ -3,7 +3,7 @@ from django.db import models
 from rest_framework import serializers
 from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
-from .models import Captcha
+from .models import Captcha, Interest,Message
 User = get_user_model() 
 
 class UserRegistrationSerializer(serializers.ModelSerializer):
@@ -68,3 +68,19 @@ class CaptchaSerializer(serializers.ModelSerializer):
     #     )
     #     return captcha
 
+class InterestSerializer(serializers.ModelSerializer):
+    sender = UserSerializer()
+    receiver = UserSerializer()
+
+    class Meta:
+        model = Interest
+        fields = ['id', 'sender', 'receiver', 'status', 'created_at']
+        read_only_fields = ['id', 'created_at']
+        
+
+class MessageSerializer(serializers.ModelSerializer):
+    sender = UserSerializer()
+    receiver = UserSerializer()
+    class Meta:
+        model = Message
+        fields = "__all__"

@@ -1,22 +1,24 @@
-from django.shortcuts import render
-
-# Create your views here.
 # views.py
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status, generics
 from django.db.models import Q
+from django.views.decorators.csrf import ensure_csrf_cookie
 from rest_framework.permissions import IsAuthenticated
 from django.contrib.auth import get_user_model, authenticate, login, logout
 from .utils.captcha import generate_captcha
-from .models import Captcha
+from .models import Captcha, Interest, Message
 from rest_framework_simplejwt.tokens import RefreshToken
 from .serializers import (
     UserRegistrationSerializer,
     UserSerializer,
     CaptchaSerializer,
+    InterestSerializer,
+    MessageSerializer,
 )
 from .custom_auth import CustomJWTAuthentication
+from django.utils.decorators import method_decorator
+from rest_framework.exceptions import NotFound
 
 # Get User Model globally
 User = get_user_model()
@@ -278,3 +280,194 @@ class CaptchaAPIView(APIView):
             return Response(
                 {"status": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST
             )
+
+
+# Interest Detail API View
+class InterestDetailAPIView(APIView):
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get_object(self, id):
+        try:
+            return Interest.objects.get(id=id)
+        except Interest.DoesNotExist:
+            raise NotFound(detail="Interest not found")
+
+    def get(self, request, id, *args, **kwargs):
+        try:
+            interest = self.get_object(id)
+            serializer = InterestSerializer(interest)
+            return Response(
+                {
+                    "status": True,
+                    "data": serializer.data,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"status": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+    def put(self, request, id, *args, **kwargs):
+        try:
+            interest = self.get_object(id)
+            serializer = InterestSerializer(interest, data=request.data, partial=True)
+            if serializer.is_valid():
+                serializer.save()
+                return Response(
+                    {
+                        "status": True,
+                        "data": serializer.data,
+                        "message": "Interest updated successfully",
+                    },
+                    status=status.HTTP_200_OK,
+                )
+            return Response(
+                {"status": False, "error": serializer.errors},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        except Exception as e:
+            return Response(
+                {"status": False, "error": str(e)}, status=status.HTTP_400_BAD_REQUEST
+            )
+
+
+class InterestListAPIView(APIView):
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get_filtered_interests(self, user_id):
+        # Filter for 'accepted' or 'rejected' statuses
+        accepted_or_rejected = Interest.objects.filter(
+            Q(status__in=[Interest.StatusChoices.ACCEPTED, Interest.StatusChoices.REJECTED]),
+            Q(sender=user_id) | Q(receiver=user_id)
+        )
+        
+        # Filter for 'pending' status
+        pending = Interest.objects.filter(
+            Q(status=Interest.StatusChoices.PENDING) & Q(sender=user_id)
+        )
+        
+        # Combine the results
+        # Set to keep unique Interest IDs
+        interests_set = set()
+
+        # Add IDs from accepted or rejected statuses
+        for interest in accepted_or_rejected:
+            if interest.sender != user_id:
+                interests_set.add(interest.id)
+            if interest.receiver != user_id:
+                interests_set.add(interest.id)
+        
+        # Add only the IDs from pending statuses
+        for interest in pending:
+            interests_set.add(interest.id)
+
+        # Fetch Interest objects by ID
+        interests = Interest.objects.filter(id__in=interests_set)
+        
+        return interests
+
+
+    def get(self, request, *args, **kwargs):
+        # Get query parameters
+        status_param = request.query_params.get("status")
+        invitations = request.query_params.get("invitations")
+        chat_users = request.query_params.get("chat_users")
+        user_id = request.user.id
+
+        # Start with a base queryset
+        queryset = Interest.objects.filter(Q(sender=user_id) | Q(receiver=user_id))
+
+        if status_param:
+            queryset = queryset.filter(status=status_param)
+        
+        if chat_users:
+            queryset = self.get_filtered_interests(user_id)
+        elif invitations:
+            queryset = queryset.filter(receiver=user_id)
+        
+        # Serialize the queryset
+        serializer = InterestSerializer(queryset, many=True)
+
+        return Response(
+            {
+                "status": True,
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
+
+class InterestExistAPIView(APIView):
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        receiver_id = request.query_params.get("receiver_id")
+        sender_id = str(request.user.id)
+
+        # Ensure the sender and receiver are ordered in a consistent way
+        if sender_id < receiver_id:
+            interest_id = f"{sender_id}_{receiver_id}"
+        else:
+            interest_id = f"{receiver_id}_{sender_id}"
+
+        # Check for the existence of the interest
+        interest = Interest.objects.filter(id=interest_id)
+        exists = interest.exists()
+
+        if exists:
+            interest = interest.first()
+            serializer = InterestSerializer(interest)
+            return Response(
+                {"status": True, "data": serializer.data, "exists": True},
+                status=status.HTTP_200_OK,
+            )
+        else:
+            return Response(
+                {"status": True, "exists": False}, status=status.HTTP_200_OK
+            )
+
+
+class MessageListAPIView(APIView):
+    authentication_classes = [CustomJWTAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request, *args, **kwargs):
+        # Get the current user
+        user = request.user
+
+        # Get the interest_id from query params
+        interest_id = request.query_params.get("interest_id", None)
+
+        # Filter messages by interest_id if provided
+        if interest_id:
+            try:
+                interest = Interest.objects.get(id=interest_id)
+            except Interest.DoesNotExist:
+                return Response(
+                    {"status": False, "error": "Interest not found"},
+                    status=status.HTTP_404_NOT_FOUND,
+                )
+
+            # Check if the user is either sender or receiver for the interest
+            if not (interest.sender == user or interest.receiver == user):
+                return Response(
+                    {
+                        "status": False,
+                        "error": "You are not authorized to view messages for this interest",
+                    },
+                    status=status.HTTP_403_FORBIDDEN,
+                )
+        else:
+            interest = None
+        queryset = Message.objects.filter(interest=interest)
+        serializer = MessageSerializer(queryset, many=True)
+        return Response(
+            {
+                "status": True,
+                "data": serializer.data,
+            },
+            status=status.HTTP_200_OK,
+        )
