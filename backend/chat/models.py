@@ -1,6 +1,3 @@
-from django.db import models
-
-# Create your models here.
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager, PermissionsMixin
 from django.db import models
 from django.utils import timezone
@@ -59,3 +56,43 @@ class Captcha(models.Model):
 
     def __str__(self):
         return f'{self.id}: {self.captcha_answer}'
+
+
+# Interest Model 
+class Interest(models.Model):
+    id = models.CharField(primary_key=True, editable=False,max_length=73)
+
+    sender = models.ForeignKey(User, related_name='sent_interests', on_delete=models.CASCADE)
+    receiver = models.ForeignKey(User, related_name='received_interests', on_delete=models.CASCADE)
+    
+    class StatusChoices(models.TextChoices):
+        PENDING = 'pending', 'Pending'
+        ACCEPTED = 'accepted', 'Accepted'
+        REJECTED = 'rejected', 'Rejected'
+
+    status = models.CharField(max_length=10, choices=StatusChoices.choices, default=StatusChoices.PENDING)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def save(self, *args, **kwargs):
+        if not self.id:
+            # Ensure the sender and receiver are ordered in a consistent way
+            if self.sender.id < self.receiver.id:
+                self.id = f"{self.sender.id}_{self.receiver.id}"
+            else:
+                self.id = f"{self.receiver.id}_{self.sender.id}"
+        
+        super().save(*args, **kwargs)
+
+    def __str__(self):
+        return f"Interest from {self.sender} to {self.receiver} with status {self.status}"
+
+# Message Model
+class Message(models.Model):
+    interest = models.ForeignKey(Interest, related_name='messages', on_delete=models.CASCADE)
+    sender = models.ForeignKey(User, related_name='sent_messages', on_delete=models.CASCADE)
+    receiver = models.ForeignKey(User, related_name='received_messages', on_delete=models.CASCADE)
+    content = models.TextField(blank=False)
+    timestamp = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"{self.sender.name} -> {self.receiver.name} =>{self.content}"
