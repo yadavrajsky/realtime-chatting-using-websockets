@@ -1,3 +1,9 @@
+![image](https://github.com/user-attachments/assets/49ee78c1-fa55-4ccc-a00f-0f1c63fbd5a7)
+
+
+https://github.com/user-attachments/assets/a8409049-5446-4c9f-9e54-6d0cfd8d810b
+
+
 # 🌐 Realtime Chatting with WebSockets & Robust Authentication
 
 A dynamic chat application developed using Django, React, and MySQL featuring secure user authentication, real-time messaging, and persistent message storage. Users can find and invite others, chat instantly upon acceptance, and access message history.
